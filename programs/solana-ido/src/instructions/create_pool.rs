@@ -3,6 +3,7 @@ use anchor_lang::prelude::*;
 use crate::{ pool::Pool, CREATE_POOL, ErrorMessage };
 
 #[derive(Accounts)]
+#[instruction(pool_id: String)]
 pub struct CreatePool<'info> {
     #[account(mut)]
     pub creator: Signer<'info>,
@@ -10,7 +11,7 @@ pub struct CreatePool<'info> {
         init,
         payer = creator,
         space = Pool::LEN,
-        seeds = [CREATE_POOL, creator.key().as_ref()],
+        seeds = [CREATE_POOL, creator.key().as_ref(), pool_id.as_bytes().as_ref()],
         bump
     )]
     pub pool_config: Account<'info, Pool>,
