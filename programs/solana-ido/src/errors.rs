@@ -7,7 +7,4 @@ pub enum ErrorMessage {
 
     #[msg("End time must be greater than start time.")]
     EndTimeMustBeGreaterThanStart,
-
-    #[msg("Pool ID already exists.")]
-    PoolIdAlreadyExists,
 }

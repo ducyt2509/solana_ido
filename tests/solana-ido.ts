@@ -25,7 +25,6 @@ describe("solana-ido", () => {
   );
 
   it("Is initialized!", async () => {
-    // Add your test here.
     const tx = await program.methods
       .initialize(owner.publicKey, creator.publicKey)
       .rpc();
@@ -60,9 +59,8 @@ describe("solana-ido", () => {
     let maxPerUser = new anchor.BN(1000);
 
 
-    // Airdrop Sol cho creator để đảm bảo có đủ phí giao dịch
-    await provider.connection.requestAirdrop(creator.publicKey, 2_227_200); // Airdrop số lượng lamports cần thiết
-    await provider.connection.confirmTransaction(await provider.connection.requestAirdrop(creator.publicKey, 2_227_200));
+    await provider.connection.requestAirdrop(creator.publicKey, 2 * 10 ** 9);
+    await provider.connection.confirmTransaction(await provider.connection.requestAirdrop(creator.publicKey, 2 * 10 ** 9));
     // Gọi hàm createPool
     const tx = await program.methods.createPool(
       poolId, poolName, startTime, endTime, totalTokensAvailable, price, tokenAddress, maxPerUser,
@@ -77,16 +75,13 @@ describe("solana-ido", () => {
     const [poolAccount] = anchor.web3.PublicKey.findProgramAddressSync(
       [
         Buffer.from(CONFIG_CREATE_POOL),
-        creator.publicKey.toBuffer(),
         Buffer.from(poolId)
       ],
       program.programId
     );
 
-    // Chờ xác nhận giao dịch
     await provider.connection.confirmTransaction(tx, "confirmed");
 
-    // Fetch thông tin poolConfig sau khi giao dịch được xác nhận
     const poolConfig = await program.account.pool.fetch(poolAccount);
     console.log("Pool Config:", {
       poolId: poolConfig.poolId,
@@ -112,31 +107,55 @@ describe("solana-ido", () => {
     assert.equal(poolConfig.maxPerUser.toString(), maxPerUser.toString(), "Max per user should match.");
   });
 
-  // it("Start time in the past should fail", async () => {
-  //   const creator = anchor.web3.Keypair.generate();
-  //   let poolId = "pool_1234";
-  //   let poolName = "My First Pool_1";
-  //   let startTime = new anchor.BN(Date.now() / 1000 - 3600); // Thời gian bắt đầu trong quá khứ
-  //   let endTime = new anchor.BN(Date.now() / 1000 + 3600); // Thời gian kết thúc trong tương lai
-  //   let totalTokensAvailable = new anchor.BN(1000000);
-  //   let price = new anchor.BN(100);
-  //   let tokenAddress = anchor.web3.Keypair.generate().publicKey;
-  //   let maxPerUser = new anchor.BN(1000);
+  it("Start time in the past should fail", async () => {
+    const creator = anchor.web3.Keypair.generate();
+    let poolId = "pool_1234";
+    let poolName = "My First Pool_1";
+    let startTime = new anchor.BN(Date.now() / 1000 - 3600);
+    let endTime = new anchor.BN(Date.now() / 1000 + 3600);
+    let totalTokensAvailable = new anchor.BN(1000000);
+    let price = new anchor.BN(100);
+    let tokenAddress = anchor.web3.Keypair.generate().publicKey;
+    let maxPerUser = new anchor.BN(1000);
 
-  //   await provider.connection.requestAirdrop(creator.publicKey, 2_227_200); // Airdrop số lượng lamports cần thiết
-  //   await provider.connection.confirmTransaction(await provider.connection.requestAirdrop(creator.publicKey, 2_227_200));
+    await provider.connection.requestAirdrop(creator.publicKey, 2 * 10 ** 9);
+    await provider.connection.confirmTransaction(await provider.connection.requestAirdrop(creator.publicKey, 2 * 10 ** 9));
 
-  //   try {
-  //     // Gọi hàm createPool với startTime trong quá khứ
-  //     await program.methods.createPool(
-  //       poolId, poolName, startTime, endTime, totalTokensAvailable, price, tokenAddress, maxPerUser,
-  //     ).accounts({
-  //       creator: creator.publicKey,
-  //     }).signers([creator]).rpc();
-  //   } catch (error) {
-  //     console.log("Expected error:", error.error.errorMessage);
-  //     assert.include(error.error.errorMessage, "Start time cannot be in the past.",);
-  //   }
+    try {
+      await program.methods.createPool(
+        poolId, poolName, startTime, endTime, totalTokensAvailable, price, tokenAddress, maxPerUser,
+      ).accounts({
+        creator: creator.publicKey,
+      }).signers([creator]).rpc();
+    } catch (error) {
+      assert.include(error.error.errorMessage, "Start time cannot be in the past.",);
+    }
 
-  // });
+  });
+
+  it("Start time is great than end time should fail", async () => {
+    const creator = anchor.web3.Keypair.generate();
+    let poolId = "pool_12345";
+    let poolName = "My First Pool_1";
+    let startTime = new anchor.BN(Date.now() / 1000 + 5000);
+    let endTime = new anchor.BN(Date.now() / 1000 + 4000);
+    let totalTokensAvailable = new anchor.BN(1000000);
+    let price = new anchor.BN(100);
+    let tokenAddress = anchor.web3.Keypair.generate().publicKey;
+    let maxPerUser = new anchor.BN(1000);
+
+    await provider.connection.requestAirdrop(creator.publicKey, 2 * 10 ** 9);
+    await provider.connection.confirmTransaction(await provider.connection.requestAirdrop(creator.publicKey, 2 * 10 ** 9));
+
+    try {
+      await program.methods.createPool(
+        poolId, poolName, startTime, endTime, totalTokensAvailable, price, tokenAddress, maxPerUser,
+      ).accounts({
+        creator: creator.publicKey,
+      }).signers([creator]).rpc();
+    } catch (error) {
+      assert.include(error.error.errorMessage, "End time must be greater than start time.",);
+    }
+
+  });
 })

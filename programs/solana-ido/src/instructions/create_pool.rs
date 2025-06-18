@@ -7,11 +7,12 @@ use crate::{ pool::Pool, CREATE_POOL, ErrorMessage };
 pub struct CreatePool<'info> {
     #[account(mut)]
     pub creator: Signer<'info>,
+
     #[account(
         init,
         payer = creator,
         space = Pool::LEN,
-        seeds = [CREATE_POOL, creator.key().as_ref(), pool_id.as_bytes().as_ref()],
+        seeds = [CREATE_POOL, pool_id.as_bytes().as_ref()],
         bump
     )]
     pub pool_config: Account<'info, Pool>,
