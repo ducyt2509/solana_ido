@@ -24,8 +24,8 @@ pub fn _create_pool(
     ctx: Context<CreatePool>,
     pool_id: String,
     pool_name: String,
-    start_time: i64,
-    end_time: i64,
+    start_time: u64,
+    end_time: u64,
     total_tokens_available: u64,
     price: u64,
     token_address: Pubkey,
@@ -33,7 +33,7 @@ pub fn _create_pool(
 ) -> Result<()> {
     let current_time = Clock::get()?.unix_timestamp;
 
-    if start_time < current_time {
+    if start_time < current_time.try_into().unwrap() {
         return Err(ErrorMessage::StartTimeInThePast.into());
     }
 
