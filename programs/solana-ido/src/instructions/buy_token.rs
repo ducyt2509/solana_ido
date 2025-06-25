@@ -10,7 +10,7 @@ use crate::{
     POOL_SEED,
     buy_token_event::BuyTokenEvent,
 };
-use anchor_spl::token::{ self, Mint, Token, TokenAccount, Transfer };
+use anchor_spl::token::{ Token, TokenAccount };
 
 #[derive(Accounts)]
 #[instruction(amount_to_pay: u64, token : Pubkey, )]
@@ -41,24 +41,23 @@ pub struct BuyToken<'info> {
     pub token_program: Program<'info, Token>,
 }
 
-pub fn _buy_token(ctx: Context<BuyToken>, amount_to_pay: u64, token: Pubkey) -> Result<()> {
+pub fn _buy_token(ctx: Context<BuyToken>, amount_to_pay: u64, _token: Pubkey) -> Result<()> {
     require!(amount_to_pay > 0, ErrorMessage::InvalidAmount);
 
-    let pool = &ctx.accounts.pool_account;
+    let pool = &mut ctx.accounts.pool_account;
     let receipt = &mut ctx.accounts.purchase_receipt;
 
     let now = Clock::get()?.unix_timestamp;
 
-    let tokens_received = 1000;
+    let tokens_received = amount_to_pay
+        .checked_mul(pool.token_rate as u64)
+        .ok_or(ErrorMessage::MathOverflow)?;
 
-    msg!(
-        "Calculating tokens received: {} = ({} * {} * {}) / {}",
-        tokens_received,
-        amount_to_pay,
-        pool.decimals,
-        pool.token_rate,
-        pool.token_decimals
-    );
+    require!(tokens_received <= pool.tokens_for_sale, ErrorMessage::NotEnoughTokens);
+
+    pool.tokens_for_sale = pool.tokens_for_sale
+        .checked_sub(tokens_received)
+        .ok_or(ErrorMessage::MathOverflow)?;
 
     receipt.buyer = ctx.accounts.buyer.key();
     receipt.pool = pool.key();
@@ -67,13 +66,13 @@ pub fn _buy_token(ctx: Context<BuyToken>, amount_to_pay: u64, token: Pubkey) -> 
     receipt.timestamp = now;
     receipt.is_claimed = false;
 
-    // emit!(BuyTokenEvent {
-    //     buyer: ctx.accounts.buyer.key(),
-    //     pool: pool.key(),
-    //     currency_amount: amount_to_pay,
-    //     tokens_received as u64,
-    //     timestamp: now,
-    // });
+    emit!(BuyTokenEvent {
+        buyer: ctx.accounts.buyer.key(),
+        pool: pool.key(),
+        currency_amount: amount_to_pay,
+        tokens_received,
+        timestamp: now,
+    });
 
     msg!(
         "User {} bought {} tokens for {} currency at pool {}",

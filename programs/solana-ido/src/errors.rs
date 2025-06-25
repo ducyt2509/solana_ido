@@ -40,6 +40,9 @@ pub enum ErrorMessage {
     #[msg("Invalid amount to pay.")]
     InvalidAmount,
 
+    #[msg("Not enough tokens to complete the operation.")]
+    NotEnoughTokens,
+
     // ============================== Validate Auth ==============================
     #[msg("Unauthorized")]
     Unauthorized,

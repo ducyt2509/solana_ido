@@ -112,9 +112,9 @@ describe("solana-ido", () => {
   const startTime = Math.floor(moment().add(10, "seconds").valueOf() / 1000);
   const endTime = Math.floor(moment().add(50, "seconds").valueOf() / 1000);
   const claimTime = Math.floor(moment().add(60, "seconds").valueOf() / 1000);
-  const tokensForSale = 1_000_000;
+  const tokensForSale = 1;
   const tokenDecimnals = 6;
-  const tokenRate = 0.1;
+  const tokenRate = 2;
   const decimals = 3;
 
   describe("Create pool", async () => {
@@ -291,7 +291,7 @@ describe("solana-ido", () => {
     //   }
     // });
     it("Should create pool successfull", async () => {
-      console.log(tokenRate / (10 ** decimals));
+
       const tx = await program.methods
         .createPool(
           new anchor.BN(startTime),
@@ -338,9 +338,7 @@ describe("solana-ido", () => {
       );
       assert.equal(
         poolInfo.tokenRate.toNumber(),
-        new anchor.BN(tokenRate).mul(
-          new anchor.BN(10).pow(new anchor.BN(decimals))
-        ).toNumber(),
+        tokenRate,
         'Token rate should match'
       );
       assert.equal(poolInfo.tokenDecimals, tokenDecimnals, "Token decimals should match");
@@ -432,5 +430,49 @@ describe("solana-ido", () => {
       // assert.ok(receipt.tokensReceived.gt(new anchor.BN(0)));
       assert.isFalse(receipt.isClaimed);
     });
+
+    // it("should be revert if amount is not enough to buy ", async () => {
+    //   try {
+    //     const amountToPay = new anchor.BN(1000);
+
+    //     const [poolAccount] = anchor.web3.PublicKey.findProgramAddressSync(
+    //       [Buffer.from("ido_platform_pool_seed"), token.publicKey.toBuffer()],
+    //       program.programId
+    //     );
+
+    //     const [receiptAccount] = anchor.web3.PublicKey.findProgramAddressSync(
+    //       [
+    //         Buffer.from("ido_platform_buy_token_seed"),
+    //         buyer.publicKey.toBuffer(),
+    //         poolAccount.toBuffer()
+    //       ],
+    //       program.programId
+    //     );
+
+    //     const buyerAta = await getAssociatedTokenAddress(
+    //       currency,
+    //       buyer.publicKey,
+    //       true,
+    //       TOKEN_PROGRAM_ID
+    //     );
+
+    //     await program.methods
+    //       .buyToken(amountToPay, token.publicKey)
+    //       .accounts({
+    //         buyer: buyer.publicKey,
+    //         associatedToken: buyerAta,
+    //       })
+    //       .signers([buyer])
+    //       .rpc();
+
+    //   } catch (error) {
+    //     assert.equal(error.error.errorCode.code, "InsufficientBalance");
+    //     assert.equal(error.error.errorMessage, "Insufficient balance to complete the purchase.");
+    //   }
+    // });
+
+
+
   });
+
 });
