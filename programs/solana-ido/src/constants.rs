@@ -2,6 +2,5 @@ use anchor_lang::prelude::*;
 
 #[constant]
 pub const CONFIG_SEED: &[u8] = b"ido_platform_seed";
-
-#[constant]
-pub const CREATE_POOL: &[u8] = b"ido_create_pool";
+pub const POOL_SEED: &[u8] = b"ido_platform_pool_seed";
+pub const BUY_TOKEN_SEED: &[u8] = b"ido_platform_buy_token_seed";

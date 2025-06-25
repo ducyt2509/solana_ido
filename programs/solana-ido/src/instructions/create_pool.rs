@@ -1,56 +1,95 @@
 use anchor_lang::prelude::*;
 
-use crate::{ pool::Pool, CREATE_POOL, ErrorMessage };
+use crate::{
+    config_account::ConfigAccount,
+    pool::PoolAccount,
+    ErrorMessage,
+    CONFIG_SEED,
+    POOL_SEED,
+};
 
 #[derive(Accounts)]
-#[instruction(pool_id: String)]
+#[instruction(
+    start_time: u64,
+    end_time: u64,
+    claim_time: u64,
+    tokens_for_sale: u64,
+    token_decimals: u8,
+    token_rate: u64,
+    decimals: u8,
+    currency: Pubkey,
+    token: Pubkey,
+    signer: Pubkey
+)]
 pub struct CreatePool<'info> {
     #[account(mut)]
-    pub creator: Signer<'info>,
-
+    pub signer: Signer<'info>,
     #[account(
         init,
-        payer = creator,
-        space = Pool::LEN,
-        seeds = [CREATE_POOL, pool_id.as_bytes().as_ref()],
+        payer = signer,
+        space = PoolAccount::LEN,
+        seeds = [POOL_SEED, token.key().as_ref()],
         bump
     )]
-    pub pool_config: Account<'info, Pool>,
+    pub pool_account: Account<'info, PoolAccount>,
+    #[account(
+        seeds = [CONFIG_SEED],
+        constraint = config_account.creator.key() == signer.key() @ErrorMessage::Unauthorized ,
+        bump
+    )]
+    pub config_account: Account<'info, ConfigAccount>,
     // System program
     pub system_program: Program<'info, System>,
 }
 
-pub fn _create_pool(
+pub fn process_create_pool(
     ctx: Context<CreatePool>,
-    pool_id: String,
-    pool_name: String,
     start_time: u64,
     end_time: u64,
-    total_tokens_available: u64,
-    price: u64,
-    token_address: Pubkey,
-    max_per_user: u64
+    claim_time: u64,
+    tokens_for_sale: u64,
+    token_decimals: u8,
+    token_rate: u64,
+    decimals: u8,
+    currency: Pubkey,
+    token: Pubkey,
+    signer: Pubkey
 ) -> Result<()> {
     let current_time = Clock::get()?.unix_timestamp;
+    let timestamp = current_time.try_into().unwrap();
 
-    if start_time < current_time.try_into().unwrap() {
+    let pool_account = &mut ctx.accounts.pool_account;
+
+    pool_account.start_time = start_time;
+    pool_account.end_time = end_time;
+    pool_account.claim_time = claim_time;
+
+    if start_time < timestamp {
         return Err(ErrorMessage::StartTimeInThePast.into());
     }
 
-    if end_time <= start_time {
-        return Err(ErrorMessage::EndTimeMustBeGreaterThanStart.into());
+    if end_time < timestamp {
+        return Err(ErrorMessage::EndTimeInThePast.into());
     }
 
-    let pool_config = &mut ctx.accounts.pool_config;
-    pool_config.pool_id = pool_id;
-    pool_config.pool_name = pool_name;
-    pool_config.creator = ctx.accounts.creator.key();
-    pool_config.start_time = start_time;
-    pool_config.end_time = end_time;
-    pool_config.total_tokens_available = total_tokens_available;
-    pool_config.price = price;
-    pool_config.token_address = token_address;
-    pool_config.max_per_user = max_per_user;
+    if end_time < start_time {
+        return Err(ErrorMessage::EndTimeBeforeStartTime.into());
+    }
 
+    if claim_time < timestamp {
+        return Err(ErrorMessage::ClaimTimeInThePast.into());
+    }
+
+    if claim_time < end_time {
+        return Err(ErrorMessage::ClaimTimeBeforeEndTime.into());
+    }
+
+    pool_account.tokens_for_sale = tokens_for_sale;
+    pool_account.token_decimals = token_decimals;
+    pool_account.token_rate = token_rate;
+    pool_account.decimals = decimals;
+    pool_account.currency = currency.key();
+    pool_account.token = token.key();
+    pool_account.signer = signer.key();
     Ok(())
 }
