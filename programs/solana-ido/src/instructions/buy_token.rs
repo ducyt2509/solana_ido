@@ -1,85 +1,103 @@
-use std::ops::{ Div, Mul };
+use crate::{
+    pool_account::PoolAccount,
+    user_account::UserAccount,
+    ErrorMessage,
+    POOL_SEED,
+    USER_ACCOUNT_SEED,
+    buy_token::calculate_buy_token,
+};
 
 use anchor_lang::prelude::*;
-
-use crate::{
-    pool::PoolAccount,
-    purchase_receipt::PurchaseReceipt,
-    ErrorMessage,
-    BUY_TOKEN_SEED,
-    POOL_SEED,
-    buy_token_event::BuyTokenEvent,
-};
-use anchor_spl::token::{ Token, TokenAccount };
+use anchor_lang::solana_program::sysvar::clock;
+use anchor_spl::token_interface::{ self, TransferChecked };
+use anchor_spl::{ associated_token::AssociatedToken, token::{ Mint, Token, TokenAccount } };
 
 #[derive(Accounts)]
-#[instruction(amount_to_pay: u64, token : Pubkey, )]
 pub struct BuyToken<'info> {
     #[account(mut)]
     pub buyer: Signer<'info>,
 
-    #[account(seeds = [POOL_SEED, token.key().as_ref()], bump)]
-    pub pool_account: Account<'info, PoolAccount>,
+    // Currency
+    #[account(mut)]
+    pub input_mint: Account<'info, Mint>,
+
+    // Token to be bought
+    #[account(mut)]
+    pub token_mint: Account<'info, Mint>,
+
+    /// CHECK:
+    #[account(mut)]
+    pub receiver: UncheckedAccount<'info>,
 
     #[account(
         mut,
-        constraint = associated_token.mint == pool_account.currency @ ErrorMessage::InvalidCurrencyAccount,
-        constraint = associated_token.amount >= amount_to_pay @ ErrorMessage::InsufficientBalance
+        seeds = [POOL_SEED, token_mint.key().as_ref()],
+        bump,
+        has_one = receiver
     )]
-    pub associated_token: Account<'info, TokenAccount>,
+    pub pool_account: Account<'info, PoolAccount>,
 
     #[account(
-        init,
+        init_if_needed,
         payer = buyer,
-        space = PurchaseReceipt::LEN,
-        seeds = [BUY_TOKEN_SEED, buyer.key().as_ref(), pool_account.key().as_ref()],
+        space = UserAccount::LEN,
+        seeds = [USER_ACCOUNT_SEED, pool_account.key().as_ref(), buyer.key().as_ref()],
         bump
     )]
-    pub purchase_receipt: Account<'info, PurchaseReceipt>,
+    pub buyer_account: Account<'info, UserAccount>,
 
-    pub system_program: Program<'info, System>,
+    #[account(
+        mut,
+        associated_token::mint = input_mint,
+        associated_token::authority = buyer,
+        associated_token::token_program = token_program,
+    )]
+    pub buyer_token_account: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        associated_token::mint = input_mint,
+        associated_token::authority = receiver,
+        associated_token::token_program = token_program,
+    )]
+    pub receiver_token_account: Account<'info, TokenAccount>,
+
     pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
 }
 
-pub fn _buy_token(ctx: Context<BuyToken>, amount_to_pay: u64, _token: Pubkey) -> Result<()> {
-    require!(amount_to_pay > 0, ErrorMessage::InvalidAmount);
+pub fn process_buy_token(ctx: Context<BuyToken>, amount: u64) -> Result<(Pubkey, Pubkey, u64)> {
+    // Logic check
+    let current_time: u64 = clock::Clock::get()?.unix_timestamp.try_into().unwrap();
+    let pool_account: &mut Account<'_, PoolAccount> = &mut ctx.accounts.pool_account;
+    let buyer_account = &mut ctx.accounts.buyer_account;
+    let bought_token = calculate_buy_token(
+        amount.try_into().unwrap(),
+        pool_account.token_rate.try_into().unwrap()
+    ).unwrap();
 
-    let pool = &mut ctx.accounts.pool_account;
-    let receipt = &mut ctx.accounts.purchase_receipt;
-
-    let now = Clock::get()?.unix_timestamp;
-
-    let tokens_received = amount_to_pay
-        .checked_mul(pool.token_rate as u64)
-        .ok_or(ErrorMessage::MathOverflow)?;
-
-    require!(tokens_received <= pool.tokens_for_sale, ErrorMessage::NotEnoughTokens);
-
-    pool.tokens_for_sale = pool.tokens_for_sale
-        .checked_sub(tokens_received)
-        .ok_or(ErrorMessage::MathOverflow)?;
-
-    receipt.buyer = ctx.accounts.buyer.key();
-    receipt.pool = pool.key();
-    receipt.currency_amount = amount_to_pay;
-    receipt.tokens_received = tokens_received as u64;
-    receipt.timestamp = now;
-    receipt.is_claimed = false;
-
-    emit!(BuyTokenEvent {
-        buyer: ctx.accounts.buyer.key(),
-        pool: pool.key(),
-        currency_amount: amount_to_pay,
-        tokens_received,
-        timestamp: now,
-    });
-
-    msg!(
-        "User {} bought {} tokens for {} currency at pool {}",
-        ctx.accounts.buyer.key(),
-        tokens_received,
-        amount_to_pay,
-        pool.key()
+    require!(pool_account.start_time <= current_time, ErrorMessage::SaleNotStartedYet);
+    require!(current_time <= pool_account.end_time, ErrorMessage::SaleEnded);
+    require!(bought_token <= pool_account.token_for_sale, ErrorMessage::BuyMoreThanAllowed);
+    require!(
+        bought_token <= pool_account.token_for_sale.checked_sub(pool_account.token_sold).unwrap(),
+        ErrorMessage::NotEnoughTokenToBuy
     );
-    Ok(())
+
+    let decimals = ctx.accounts.input_mint.decimals;
+    let cpi_accounts = TransferChecked {
+        from: ctx.accounts.buyer_token_account.to_account_info(),
+        mint: ctx.accounts.input_mint.to_account_info(),
+        to: ctx.accounts.receiver_token_account.to_account_info(),
+        authority: ctx.accounts.buyer.to_account_info(),
+    };
+    let cpi_program = ctx.accounts.token_program.to_account_info();
+    let cpi_context = CpiContext::new(cpi_program, cpi_accounts);
+    token_interface::transfer_checked(cpi_context, amount, decimals)?;
+
+    pool_account.token_sold = pool_account.token_sold.checked_add(bought_token).unwrap();
+    buyer_account.bought = buyer_account.bought.checked_add(bought_token).unwrap();
+
+    Ok((ctx.accounts.buyer.key(), ctx.accounts.buyer.key(), amount))
 }

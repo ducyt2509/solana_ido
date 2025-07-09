@@ -16,11 +16,5 @@ pub fn process_initialize(ctx: Context<Initialize>, owner: Pubkey, creator: Pubk
     let config_account = &mut ctx.accounts.config_account;
     config_account.owner = owner.key();
     config_account.creator = creator.key();
-
-    msg!(
-        "Config account initialized with owner: {}, creator: {}",
-        config_account.owner,
-        config_account.creator
-    );
     Ok(())
 }
