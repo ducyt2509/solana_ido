@@ -320,9 +320,6 @@ describe("solana-ido-platform", () => {
       const afterBalance = (await provider.connection.getTokenAccountBalance(userInputAccount)).value.amount;
       console.log("After balance: ", afterBalance);
 
-
-
-
       const receiverBalanceAfter = (await provider.connection.getTokenAccountBalance(receiverInputAccount)).value.amount;
       console.log("After Receiver balance: ", receiverBalanceAfter);
 
@@ -468,6 +465,23 @@ describe("solana-ido-platform", () => {
         console.log("🔢 Pool After: ", poolAfter.value.amount);
         console.log("🔢 User Before:", userBeforeAmount);
         console.log("🔢 User After: ", userAfter.value.amount);
+
+        const [buyerAccountPda] = anchor.web3.PublicKey.findProgramAddressSync(
+          [
+            Buffer.from("ido_platform_account_seed"),
+            poolAccount.toBuffer(),
+            user.publicKey.toBuffer()
+          ],
+          program.programId
+        );
+
+        const buyerAccountInfo = await program.account.userAccount.fetch(buyerAccountPda);
+
+        console.log("Buyer account info: ", {
+          bought: new anchor.BN(buyerAccountInfo.bought.toString()),
+          claimed: new anchor.BN(buyerAccountInfo.claimed.toString()),
+          pool: buyerAccountInfo.pool.toBase58(),
+        });
 
       } catch (error) {
         console.log("❌ Error during claim:", error);

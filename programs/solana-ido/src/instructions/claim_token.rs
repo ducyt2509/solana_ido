@@ -27,7 +27,9 @@ pub struct ClaimToken<'info> {
     )]
     pub pool_account: Account<'info, PoolAccount>,
 
-    #[account(seeds = [USER_ACCOUNT_SEED, pool_account.key().as_ref(), buyer.key().as_ref()], bump)]
+    #[account(
+        mut,
+        seeds = [USER_ACCOUNT_SEED, pool_account.key().as_ref(), buyer.key().as_ref()], bump)]
     pub buyer_account: Account<'info, UserAccount>,
 
     #[account(
@@ -61,7 +63,7 @@ pub fn process_claim_token(ctx: Context<ClaimToken>) -> Result<(Pubkey, Pubkey, 
     let current_time = clock::Clock::get()?.unix_timestamp as u64;
     require!(current_time >= pool_account.claim_time, ErrorMessage::ClaimNotStartedYet);
 
-    let amount_to_claim = buyer_account.bought;
+    let amount_to_claim = buyer_account.bought - buyer_account.claimed;
     require!(amount_to_claim > 0, ErrorMessage::AlreadyClaimed);
 
     let token_mint_key = ctx.accounts.token_mint.key();
@@ -87,6 +89,8 @@ pub fn process_claim_token(ctx: Context<ClaimToken>) -> Result<(Pubkey, Pubkey, 
         amount_to_claim,
         ctx.accounts.token_mint.decimals
     )?;
+
+    buyer_account.claimed = buyer_account.bought;
 
     Ok((buyer.key(), token_mint_key, amount_to_claim))
 }
