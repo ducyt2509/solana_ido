@@ -17,6 +17,12 @@ pub struct BuyToken<'info> {
     #[account(mut)]
     pub buyer: Signer<'info>,
 
+    #[account(
+        mut,
+        constraint = pool_account.signer == pool_signer.key() @ ErrorMessage::InvalidPoolSigner,
+    )]
+    pub pool_signer: Signer<'info>,
+
     // Currency
     #[account(mut)]
     pub input_mint: Account<'info, Mint>,
@@ -74,12 +80,12 @@ pub fn process_buy_token(ctx: Context<BuyToken>, amount: u64) -> Result<(Pubkey,
     let buyer_account = &mut ctx.accounts.buyer_account;
     let bought_token = calculate_buy_token(
         amount.try_into().unwrap(),
-        pool_account.token_rate.try_into().unwrap()
+        pool_account.token_rate.try_into().unwrap(),
+        pool_account.token_rate_decimals.try_into().unwrap()
     ).unwrap();
 
     require!(pool_account.start_time <= current_time, ErrorMessage::SaleNotStartedYet);
     require!(current_time <= pool_account.end_time, ErrorMessage::SaleEnded);
-    require!(bought_token <= pool_account.token_for_sale, ErrorMessage::BuyMoreThanAllowed);
     require!(
         bought_token <= pool_account.token_for_sale.checked_sub(pool_account.token_sold).unwrap(),
         ErrorMessage::NotEnoughTokenToBuy
