@@ -9,7 +9,9 @@ import {
   createMintToInstruction,
   getAssociatedTokenAddressSync,
   TOKEN_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddress,
+  mintTo
 } from "@solana/spl-token";
 import * as console from "node:console";
 
@@ -118,30 +120,6 @@ describe("solana-ido-platform", () => {
             [account, owner],
             { skipPreflight: true }
           )
-
-          const programTokenAccount = getAssociatedTokenAddressSync(
-            tokenMint.publicKey,     // mint
-            program.programId,       // owner (public key của chương trình)
-            true,                    // allowOwnerOffCurve → vì programId không phải keypair
-            TOKEN_PROGRAM_ID,
-            ASSOCIATED_TOKEN_PROGRAM_ID
-          );
-
-          const accountInfo = await provider.connection.getAccountInfo(programTokenAccount);
-          if (!accountInfo) {
-            const createATAIx = createAssociatedTokenAccountInstruction(
-              owner.publicKey,         // payer
-              programTokenAccount,     // ATA to create
-              program.programId,       // owner of ATA
-              tokenMint.publicKey,     // mint
-              TOKEN_PROGRAM_ID,
-              ASSOCIATED_TOKEN_PROGRAM_ID
-            );
-
-            const tx = new anchor.web3.Transaction().add(createATAIx);
-            await provider.sendAndConfirm(tx, [owner]);
-          }
-
         } catch (e) {
           console.error(e);
         }
@@ -171,8 +149,8 @@ describe("solana-ido-platform", () => {
   });
 
   const startTime = Math.floor(moment().valueOf() / 1000);
-  const endTime = Math.floor(moment().add(500, "seconds").valueOf() / 1000);
-  const claimTime = Math.floor(moment().add(500, "seconds").valueOf() / 1000);
+  const endTime = Math.floor(moment().add(10, "seconds").valueOf() / 1000);
+  const claimTime = Math.floor(moment().add(20, "seconds").valueOf() / 1000);
   const tokenForSale = 1_000_000;
   const tokenSold = 0
   const tokenRate = 1;
@@ -275,81 +253,229 @@ describe("solana-ido-platform", () => {
   });
 
   describe("Buy token", async () => {
-    it("Should buy token successfully", async () => {
-      // Get input token balance before
+    it("Should buy token successfully with partial sign", async () => {
       const userInputAccount = getAssociatedTokenAddressSync(
         inputMint.publicKey,
         user.publicKey,
         false,
         TOKEN_PROGRAM_ID
       );
-      const beforeBalance = (await provider.connection.getTokenAccountBalance(userInputAccount)).value.amount;
 
+      const receiverInputAccount = getAssociatedTokenAddressSync(
+        inputMint.publicKey,
+        receiver.publicKey,
+        false,
+        TOKEN_PROGRAM_ID
+      );
+
+      const beforeBalance = (await provider.connection.getTokenAccountBalance(userInputAccount)).value.amount;
+      const receiverBalanceBefore = (await provider.connection.getTokenAccountBalance(receiverInputAccount)).value.amount;
+      console.log("Before Receiver balance: ", receiverBalanceBefore);
       console.log("Before balance: ", beforeBalance);
 
-      const signature = await program.methods.buyToken(
-        new anchor.BN(100),
-      ).accounts({
+      // Step 1: Build the transaction
+      const tx = await program.methods.buyToken(new anchor.BN(100)).accounts({
         buyer: user.publicKey,
+        poolSigner: creator.publicKey,
         inputMint: inputMint.publicKey,
         tokenMint: tokenMint.publicKey,
-      })
-        .signers([user])
-        .rpc();
+      }).transaction();
 
-      // Get input token balance after
+      // Step 2: Partial sign by creator
+      tx.recentBlockhash = (await provider.connection.getLatestBlockhash()).blockhash;
+      tx.feePayer = creator.publicKey;
+      tx.partialSign(creator);
+      tx.partialSign(user);
+
+      const rawTx = tx.serialize();
+      const sig = await provider.connection.sendRawTransaction(rawTx);
+      await provider.connection.confirmTransaction(sig);
+
+      const [poolAccount] = anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("ido_platform_pool_seed"),
+          tokenMint.publicKey.toBuffer(),
+        ],
+        program.programId
+      );
+
+
+      const [buyerAccountPda] = anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("ido_platform_account_seed"),
+          poolAccount.toBuffer(),
+          user.publicKey.toBuffer()
+        ],
+        program.programId
+      );
+
+      const buyerAccountInfo = await program.account.userAccount.fetch(buyerAccountPda);
+
+      console.log("Buyer account info: ", {
+        bought: new anchor.BN(buyerAccountInfo.bought.toString()),
+        claimed: new anchor.BN(buyerAccountInfo.claimed.toString()),
+        pool: buyerAccountInfo.pool.toBase58(),
+      });
+
       const afterBalance = (await provider.connection.getTokenAccountBalance(userInputAccount)).value.amount;
       console.log("After balance: ", afterBalance);
-    })
-
-    it("Should claim token successfully", async () => {
-      const userTokenAccount = getAssociatedTokenAddressSync(
-        tokenMint.publicKey,
-        user.publicKey,
-        false,
-        TOKEN_PROGRAM_ID,
-        ASSOCIATED_TOKEN_PROGRAM_ID
-      );
-
-      // Kiểm tra tài khoản có tồn tại chưa
-      const accountInfo = await provider.connection.getAccountInfo(userTokenAccount);
-
-      if (!accountInfo) {
-        console.warn("Token account does not exist yet:", userTokenAccount.toBase58());
-      } else {
-        const beforeBalance = await provider.connection.getTokenAccountBalance(userTokenAccount);
-        console.log("Before balance:", beforeBalance.value.uiAmountString);
-      }
-
-      const signature = await program.methods.claimToken()
-        .accounts({
-          buyer: user.publicKey,
-          inputMint: inputMint.publicKey,
-          tokenMint: tokenMint.publicKey,
-        })
-        .signers([user, creator])
-        .rpc();
 
 
-      const userTokenAccount2 = getAssociatedTokenAddressSync(
-        tokenMint.publicKey,
-        user.publicKey,
-        false,
-        TOKEN_PROGRAM_ID,
-        ASSOCIATED_TOKEN_PROGRAM_ID
-      );
 
-      // Kiểm tra tài khoản có tồn tại chưa
-      const accountInfo2 = await provider.connection.getAccountInfo(userTokenAccount);
 
-      if (!accountInfo) {
-        console.warn("Token account does not exist yet:", userTokenAccount.toBase58());
-      } else {
-        const beforeBalance = await provider.connection.getTokenAccountBalance(userTokenAccount2);
-        console.log("after balance:", beforeBalance.value.uiAmountString);
-      }
+      const receiverBalanceAfter = (await provider.connection.getTokenAccountBalance(receiverInputAccount)).value.amount;
+      console.log("After Receiver balance: ", receiverBalanceAfter);
 
     });
+
+
+  })
+
+  describe("Claim token", async () => {
+    before(async () => {
+      // 1. Derive pool_account (PDA)
+      const [poolAccount] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("ido_platform_pool_seed"), tokenMint.publicKey.toBuffer()],
+        program.programId
+      );
+
+      // 2. Derive ATA of pool_account (PDA)
+      const poolTokenAccount = await getAssociatedTokenAddress(
+        tokenMint.publicKey,
+        poolAccount,
+        true // isPDA
+      );
+
+      // 3. Derive ATA of user
+      const userTokenAccount = await getAssociatedTokenAddress(
+        tokenMint.publicKey,
+        user.publicKey
+      );
+
+      // 4. Ensure ATA for pool exists
+      const poolAtaInfo = await provider.connection.getAccountInfo(poolTokenAccount);
+      if (!poolAtaInfo) {
+        const createPoolAtaIx = createAssociatedTokenAccountInstruction(
+          user.publicKey,         // payer
+          poolTokenAccount,       // ATA address
+          poolAccount,            // owner (PDA)
+          tokenMint.publicKey
+        );
+
+        const createAtaTx = new anchor.web3.Transaction().add(createPoolAtaIx);
+        await provider.sendAndConfirm(createAtaTx, [user]);
+      }
+
+      // 5. Mint token to pool_token_account (only if balance is zero)
+      const poolBalanceInfo = await provider.connection.getTokenAccountBalance(poolTokenAccount);
+      if (Number(poolBalanceInfo.value.amount) === 0) {
+        const mintToIx = createMintToInstruction(
+          tokenMint.publicKey,
+          poolTokenAccount,
+          owner.publicKey, // mintAuthority
+          1_000_000_000,
+          [owner],
+          TOKEN_PROGRAM_ID
+        );
+
+        await anchor.web3.sendAndConfirmTransaction(
+          provider.connection,
+          new anchor.web3.Transaction().add(mintToIx),
+          [owner],
+          { skipPreflight: true }
+        );
+      }
+
+    })
+
+    it("Claim token with wrong time", async () => {
+      try {
+        // // 7. Claim token
+        const tx = await program.methods
+          .claimToken()
+          .accounts({
+            buyer: user.publicKey,
+            tokenMint: tokenMint.publicKey,
+          })
+          .signers([user])
+          .rpc();
+
+        console.log("✅ Claim tx:", tx);
+
+
+      } catch (error) {
+        assert.equal(error.error.errorCode.code, "ClaimNotStartedYet");
+        assert.equal(error.error.errorMessage, "ClaimNotStartedYet");
+
+      }
+    })
+
+
+    it("✅ claim with balance check", async () => {
+      try {
+        await sleep(30)
+        // 1. Derive pool_account (PDA)
+        const [poolAccount] = anchor.web3.PublicKey.findProgramAddressSync(
+          [Buffer.from("ido_platform_pool_seed"), tokenMint.publicKey.toBuffer()],
+          program.programId
+        );
+
+        // 2. Derive ATA of pool_account (PDA)
+        const poolTokenAccount = await getAssociatedTokenAddress(
+          tokenMint.publicKey,
+          poolAccount,
+          true // isPDA
+        );
+
+        // 3. Derive ATA of user
+        const userTokenAccount = await getAssociatedTokenAddress(
+          tokenMint.publicKey,
+          user.publicKey
+        );
+
+
+        // 6. Get balances before
+        const poolBefore = await provider.connection.getTokenAccountBalance(poolTokenAccount);
+
+        let userBeforeAmount = "0";
+        const userAtaInfo = await provider.connection.getAccountInfo(userTokenAccount);
+        if (userAtaInfo) {
+          const userBefore = await provider.connection.getTokenAccountBalance(userTokenAccount);
+          userBeforeAmount = userBefore.value.amount;
+        } else {
+          console.log("ℹ️ User token ATA does not exist yet (will be created during claim).");
+        }
+
+        console.log("🔢 Pool Before:", poolBefore.value.amount);
+
+        // // 7. Claim token
+        const tx = await program.methods
+          .claimToken()
+          .accounts({
+            buyer: user.publicKey,
+            tokenMint: tokenMint.publicKey,
+          })
+          .signers([user])
+          .rpc();
+
+        console.log("✅ Claim tx:", tx);
+
+        // // 8. Get balances after
+        const poolAfter = await provider.connection.getTokenAccountBalance(poolTokenAccount);
+        const userAfter = await provider.connection.getTokenAccountBalance(userTokenAccount);
+
+        console.log("🔢 Pool Before:", poolBefore.value.amount);
+        console.log("🔢 Pool After: ", poolAfter.value.amount);
+        console.log("🔢 User Before:", userBeforeAmount);
+        console.log("🔢 User After: ", userAfter.value.amount);
+
+      } catch (error) {
+        console.log("❌ Error during claim:", error);
+      }
+    });
+
+
+
   })
 
 

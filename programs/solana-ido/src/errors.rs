@@ -6,6 +6,9 @@ pub enum ErrorMessage {
     #[msg("Unauthorized")]
     Unauthorized,
 
+    #[msg("InvalidSigner")]
+    InvalidPoolSigner,
+
     // ============================POOL===========================
     #[msg("InvalidPoolTime")]
     InvalidPoolTime,

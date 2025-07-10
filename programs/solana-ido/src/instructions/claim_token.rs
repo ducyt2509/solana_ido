@@ -7,24 +7,17 @@ use crate::{
 };
 
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::sysvar::clock;
-use anchor_spl::token_interface::{ self, TransferChecked };
-use anchor_spl::{ token::{ Mint, Token, TokenAccount } };
+use anchor_lang::solana_program::{ program::invoke_signed, sysvar::clock };
+use anchor_spl::{
+    token::{ self, Mint, Token, TokenAccount, TransferChecked },
+    associated_token::AssociatedToken,
+};
 
 #[derive(Accounts)]
 pub struct ClaimToken<'info> {
     #[account(mut)]
     pub buyer: Signer<'info>,
 
-    #[account(mut)]
-    pub pool_signer: Signer<'info>,
-
-    // Currency
-    #[account(mut)]
-    pub input_mint: Account<'info, Mint>,
-
-    // Token to be bought
-    #[account(mut)]
     pub token_mint: Account<'info, Mint>,
 
     #[account(
@@ -38,41 +31,62 @@ pub struct ClaimToken<'info> {
     pub buyer_account: Account<'info, UserAccount>,
 
     #[account(
-        mut,
-        associated_token::mint = input_mint,
+        init_if_needed,
+        payer = buyer,
+        associated_token::mint = token_mint,
         associated_token::authority = buyer,
-        associated_token::token_program = token_program,
+        associated_token::token_program = token_program
     )]
     pub buyer_token_account: Account<'info, TokenAccount>,
 
+    #[account(
+        init_if_needed,
+        payer = buyer,
+        associated_token::mint = token_mint,
+        associated_token::authority = pool_account,
+        associated_token::token_program = token_program
+    )]
+    pub pool_token_account: Account<'info, TokenAccount>,
+
     pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
 
 pub fn process_claim_token(ctx: Context<ClaimToken>) -> Result<(Pubkey, Pubkey, u64)> {
-    // Logic check
-    let current_time: u64 = clock::Clock::get()?.unix_timestamp.try_into().unwrap();
-    let pool_account: &mut Account<'_, PoolAccount> = &mut ctx.accounts.pool_account;
+    let buyer = &ctx.accounts.buyer;
     let buyer_account = &mut ctx.accounts.buyer_account;
-    let token_mint: &Account<'_, Mint> = &ctx.accounts.token_mint;
-    let amount: u64 = buyer_account.bought;
+    let pool_account = &ctx.accounts.pool_account;
 
-    require!(pool_account.claim_time <= current_time, ErrorMessage::ClaimNotStartedYet);
-    require!(amount > 0, ErrorMessage::UserHasNotBoughtTokens);
+    let current_time = clock::Clock::get()?.unix_timestamp as u64;
+    require!(current_time >= pool_account.claim_time, ErrorMessage::ClaimNotStartedYet);
 
-    require!(buyer_account.claimed == 0, ErrorMessage::AlreadyClaimed);
+    let amount_to_claim = buyer_account.bought;
+    require!(amount_to_claim > 0, ErrorMessage::AlreadyClaimed);
 
-    // Transfer tokens from pool to buyer
-    let decimals = ctx.accounts.token_mint.decimals;
+    let token_mint_key = ctx.accounts.token_mint.key();
+    let pool_signer_seeds: [&[u8]; 3] = [
+        POOL_SEED,
+        token_mint_key.as_ref(),
+        &[ctx.bumps.pool_account],
+    ];
+
     let cpi_accounts = TransferChecked {
-        from: ctx.accounts.pool_account.to_account_info(),
-        mint: token_mint.to_account_info(),
-        to: ctx.accounts.buyer.to_account_info(),
-        authority: ctx.accounts.pool_signer.to_account_info(),
+        from: ctx.accounts.pool_token_account.to_account_info(),
+        mint: ctx.accounts.token_mint.to_account_info(),
+        to: ctx.accounts.buyer_token_account.to_account_info(),
+        authority: ctx.accounts.pool_account.to_account_info(),
     };
-    let cpi_program = ctx.accounts.pool_account.to_account_info();
-    let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-    token_interface::transfer_checked(cpi_ctx, amount, decimals)?;
 
-    Ok((ctx.accounts.buyer.key(), ctx.accounts.token_mint.key(), amount))
+    token::transfer_checked(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            cpi_accounts,
+            &[&pool_signer_seeds]
+        ),
+        amount_to_claim,
+        ctx.accounts.token_mint.decimals
+    )?;
+
+    Ok((buyer.key(), token_mint_key, amount_to_claim))
 }
